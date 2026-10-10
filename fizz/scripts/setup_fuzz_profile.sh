@@ -20,7 +20,10 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${1:-.}"
+# Normalize to an absolute path. The build probes below `cd "$PROJECT_ROOT"`, after which a
+# relative PROJECT_ROOT would no longer resolve — the script documents `setup_fuzz_profile.sh
+# <PROJECT_ROOT>` and SKILL.md Step 8.0 passes it a relative path, so this is the common case.
+PROJECT_ROOT="$(cd "${1:-.}" && pwd)"
 
 if [ ! -f "$PROJECT_ROOT/foundry.toml" ]; then
     echo "ERROR: foundry.toml not found in $PROJECT_ROOT"
@@ -44,21 +47,24 @@ echo "via_ir = true detected in foundry.toml."
 
 if grep -qE '^\[profile\.fuzz\]' "$TOML"; then
     echo "[profile.fuzz] already exists in foundry.toml — skipping creation."
-    # Try to determine what mode it's in
-    if grep -A5 '^\[profile\.fuzz\]' "$TOML" | grep -qE 'via[_-]ir\s*=\s*false'; then
-        echo "Existing fuzz profile has via_ir = false."
-        # Verify it compiles
-        if cd "$PROJECT_ROOT" && FOUNDRY_PROFILE=fuzz forge build 2>/dev/null; then
+
+    # A second [profile.fuzz] table is a TOML duplicate-key error, so an existing profile can
+    # never be repaired by appending another one — it can only be probed. Report what it
+    # actually is, and never claim a mode that has not compiled.
+    if cd "$PROJECT_ROOT" && FOUNDRY_PROFILE=fuzz forge build 2>/dev/null; then
+        if grep -A5 '^\[profile\.fuzz\]' "$TOML" | grep -qE 'via[_-]ir\s*=\s*false'; then
+            echo "Existing fuzz profile has via_ir = false."
             echo "FUZZ_PROFILE=no-ir"
-            exit 0
         else
-            echo "Existing fuzz profile does not compile — will attempt to fix."
+            echo "Existing fuzz profile does not disable via_ir."
+            echo "FUZZ_PROFILE=ir-no-opt"
         fi
-    else
-        echo "Existing fuzz profile does not disable via_ir."
-        echo "FUZZ_PROFILE=ir-no-opt"
         exit 0
     fi
+
+    echo "Existing fuzz profile does not compile — falling back to the default profile."
+    echo "FUZZ_PROFILE=default"
+    exit 1
 fi
 
 # ――――――――――――――――――――――――― Attempt 1: Disable via_ir ―――――――――――――――――――――――――
