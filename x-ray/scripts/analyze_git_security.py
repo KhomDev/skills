@@ -393,6 +393,21 @@ def run_git(repo: str, *args: str, allow_fail: bool = False) -> str:
         raise
 
 
+def _numstat_path(path: str) -> str:
+    """The post-rename path of a --numstat entry.
+
+    git prints a rename as `src/{Old.sol => core/New.sol}` or `old.sol => new.sol`. Read
+    as-is, the path ends in `}` (or carries the old name), so the file is never classified
+    as source and a fix that also moves a file loses its source signals.
+    """
+    m = re.match(r"(.*)\{(.*) => (.*)\}(.*)", path)
+    if m:
+        return re.sub(r"/{2,}", "/", m.group(1) + m.group(3) + m.group(4))
+    if " => " in path:
+        return path.split(" => ", 1)[1]
+    return path
+
+
 def parse_git_log(repo: str, src_dir: str) -> list[Commit]:
     """Parse full git history in a single call."""
     sep = "<<SEP>>"
@@ -424,7 +439,7 @@ def parse_git_log(repo: str, src_dir: str) -> list[Commit]:
                     deleted = int(parts[1]) if parts[1] != "-" else 0
                 except ValueError:
                     continue
-                path = parts[2]
+                path = _numstat_path(parts[2])
                 is_src, is_tst = classify_path(path, src_dir)
                 current.files.append(FileChange(
                     path=path, added=added, deleted=deleted,
